@@ -1,0 +1,129 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jewel Atelier Admin</title><link rel="stylesheet" href="style.css"><style>.admin-wrap{width:min(1100px,calc(100% - 24px));margin:24px auto}.admin-card{background:#fff;border:1px solid var(--border);border-radius:18px;padding:24px;box-shadow:0 18px 55px rgba(12,31,58,.08)}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{text-align:left;border-bottom:1px solid var(--border);padding:12px;font-size:14px}th{color:var(--muted)}.admin-actions{display:flex;gap:8px}.admin-actions button{border:0;border-radius:999px;padding:8px 12px;font-weight:800;cursor:pointer}.confirm{background:var(--success);color:white}.cancel{background:var(--danger);color:white}.delete{background:#111827;color:white}.loading{padding:30px;text-align:center;color:var(--muted)}</style></head><body><main class="admin-wrap"><div class="admin-card"><h1>Jewel Atelier Admin</h1><p>Manage bookings from Google Sheets.</p><button class="primary-btn" onclick="loadBookings()">Refresh</button><div id="adminContent" class="loading">Loading bookings...</div></div></main><script>
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxKx8Jjf7sK_xTs0adL6GO3aRYriTLhWpQZoiC2iPkc2FViP63NFA2gD2f352z47UjZ/exec";
+
+function jsonp(params) {
+  return new Promise((resolve, reject) => {
+    const el = document.getElementById('adminContent');
+    if (!GOOGLE_SCRIPT_URL.includes('script.google') || !GOOGLE_SCRIPT_URL.includes('/exec')) {
+      reject(new Error('Add your Google Apps Script /exec URL inside admin.html.'));
+      return;
+    }
+
+    const callbackName = 'jaAdminCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+    const url = new URL(GOOGLE_SCRIPT_URL);
+    Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value == null ? '' : String(value)));
+    url.searchParams.set('callback', callbackName);
+
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Connection timeout. Check Apps Script deployment and URL.'));
+    }, 15000);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[callbackName];
+    }
+
+    window[callbackName] = (data) => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('Could not connect to Google Apps Script.'));
+    };
+
+    script.src = url.toString();
+    document.body.appendChild(script);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>'"]/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;'
+  }[char]));
+}
+
+async function loadBookings() {
+  const el = document.getElementById('adminContent');
+  el.textContent = 'Loading bookings...';
+
+  try {
+    const data = await jsonp({ action: 'list' });
+    if (!data.success) throw new Error(data.message || 'Could not load bookings.');
+
+    const bookings = data.bookings || [];
+    if (!bookings.length) {
+      el.innerHTML = '<p>No bookings yet.</p>';
+      return;
+    }
+
+    el.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Course</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Payment</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${bookings.map(b => `
+            <tr>
+              <td>${escapeHtml(b.id)}</td>
+              <td>${escapeHtml(b.firstName)} ${escapeHtml(b.lastName)}<br><small>${escapeHtml(b.email)}</small><br><small>${escapeHtml(b.whatsapp)}</small></td>
+              <td>${escapeHtml(b.course)}</td>
+              <td>${escapeHtml(b.displayDate || b.date)}</td>
+              <td>${escapeHtml(b.time)}</td>
+              <td>${escapeHtml(b.paymentMethod)}<br><small>$${escapeHtml(b.deposit)}</small></td>
+              <td>${escapeHtml(b.status)}</td>
+              <td class="admin-actions">
+                <button class="confirm" onclick="updateStatus('${escapeHtml(b.id)}','Confirmed')">Confirm</button>
+                <button class="cancel" onclick="updateStatus('${escapeHtml(b.id)}','Cancelled')">Cancel</button>
+                <button class="delete" onclick="deleteBooking('${escapeHtml(b.id)}')">Delete</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<p class="status-message error">${escapeHtml(e.message)}<br>Make sure Apps Script is deployed as: Execute as Me + Anyone + URL ends with /exec.</p>`;
+  }
+}
+
+async function updateStatus(id, status) {
+  const el = document.getElementById('adminContent');
+  try {
+    await jsonp({ action: 'updateStatus', id, status });
+    await loadBookings();
+  } catch (e) {
+    alert(e.message || 'Could not update booking.');
+  }
+}
+
+
+async function deleteBooking(id) {
+  if (!confirm('Delete this booking permanently? This will free the time slot.')) return;
+
+  try {
+    const data = await jsonp({ action: 'delete', id });
+    if (!data.success) throw new Error(data.message || 'Could not delete booking.');
+    await loadBookings();
+  } catch (e) {
+    alert(e.message || 'Could not delete booking.');
+  }
+}
+
+loadBookings();
+</script></body></html>
